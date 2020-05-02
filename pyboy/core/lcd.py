@@ -80,10 +80,10 @@ class LCD:
                     if not self.mb.disable_renderer:
                         self.mb.renderer.render_scanline(self)
 
-                    self.set_STAT_mode(ModeHBLANK)
-
                     if self.WX < 166 and self.LCDC.window_enable and self.LY >= self.WY:
                         self.window_line += 1
+
+                    self.set_STAT_mode(ModeHBLANK)
 
                     # Check for STAT Hblank interrupt
                     if self.mb.getitem(STAT) & (1 << 3):
@@ -100,11 +100,18 @@ class LCD:
                     self.mb.setitem(LY, self.LY)
 
                     if (self.LY > 143):
-
                         self.mb.cpu.set_interruptflag(0)
                         self.set_STAT_mode(ModeVBLANK)
+
+                        # Check for STAT Vblank interrupt
+                        if self.mb.getitem(STAT) & (1 << 4):
+                            self.mb.cpu.set_interruptflag(cpu.LCDC)
                     else:
                         self.set_STAT_mode(ModeOAM)
+
+                        # Check for STAT OAM interrupt
+                        if self.mb.getitem(STAT) & (1 << 5):
+                            self.mb.cpu.set_interruptflag(cpu.LCDC)
 
             elif mode == 1:
                 # Mode 1 - Vblank
@@ -123,6 +130,10 @@ class LCD:
                         self.mb.setitem(LY, self.LY)
 
                         self.set_STAT_mode(ModeOAM)
+
+                        # Check for STAT OAM interrupt
+                        if self.mb.getitem(STAT) & (1 << 5):
+                            self.mb.cpu.set_interruptflag(cpu.LCDC)
 
         else:
             # self.mb.renderer.blank_screen()
