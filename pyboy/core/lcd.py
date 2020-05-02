@@ -311,50 +311,48 @@ class Renderer:
                     # If background is disabled, it becomes white
                     self._screenbuffer[y][x] = self.color_palette[0]
 
-        # TODO: Scanline sprite rendering
-        if rowLCDC.sprite_enable:
-            self.render_sprites(lcd, self._screenbuffer, False)
+            if rowLCDC.sprite_enable:
+                # Render sprites
+                # - Doesn't restrict 10 sprites per scan line
+                spriteheight = 16 if rowLCDC.sprite_height else 8
 
-    def render_sprites(self, lcd, buffer, ignore_priority):
-        # Render sprites
-        # - Doesn't restrict 10 sprites per scan line
-        # - Prioritizes sprite in inverted order
-        spriteheight = 16 if lcd.LCDC.sprite_height else 8
-        bgpkey = self.color_palette[lcd.BGP.getcolor(0)]
+                for n in range(0x00, 0xA0, 4):
+                    spritey = lcd.OAM[n] - spriteheight
+                    # Documentation states the x coordinate needs to be subtracted by 8
+                    spritex = lcd.OAM[n + 1] - 8
 
-        for n in range(0x00, 0xA0, 4):
-            # Documentation states the y coordinate needs to be subtracted by 16
-            y = lcd.OAM[n] - 16
-            # Documentation states the x coordinate needs to be subtracted by 8
-            x = lcd.OAM[n + 1] - 8
-            tileindex = lcd.OAM[n + 2]
-            attributes = lcd.OAM[n + 3]
-            xflip = attributes & 0b00100000
-            yflip = attributes & 0b01000000
-            spritepriority = (attributes & 0b10000000) and not ignore_priority
-            spritepalette = (lcd.OBP1 if attributes &
-                             0b10000 else lcd.OBP0)
+                    # Check if the sprite is on this scanline
+                    if spritey > y and spritey <= y + spriteheight:
+                        tileindex = lcd.OAM[n + 2]
 
-            for dy in range(spriteheight):
-                yy = spriteheight - dy - 1 if yflip else dy
-                if 0 <= y < ROWS:
-                    for dx in range(8):
-                        xx = 7 - dx if xflip else dx
-                        col = self._tilecache[8*tileindex + yy][xx]
-                        pixel = spritepalette.getcolor(col)
-                        if 0 <= x < COLS:
-                            # import pdb; pdb.set_trace()
-                            # TODO: Checking `buffer[y][x] == bgpkey` is a bit of a hack
-                            # if (spritepriority and not buffer[y][x] == bgpkey):
-                            # Add a fake alphachannel to the sprite for BG pixels. We can't just merge this
-                            # with the next 'if', as sprites can have an alpha channel in other ways
-                            # pixel &= ~self.alphamask
+                        # 16 height sprites: low bit ignored
+                        if rowLCDC.sprite_height:
+                            tileindex &= 0b11111110
 
-                            if pixel:
-                                buffer[y][x] = pixel
-                        x += 1
-                    x -= 8
-                y += 1
+                        attributes = lcd.OAM[n + 3]
+                        xflip = attributes & 0b00100000
+                        yflip = attributes & 0b01000000
+                        spritepriority = (
+                            attributes & 0b10000000) and not False
+                        spritepalette = (rowOBP1 if attributes &
+                                         0b10000 else rowOBP0)
+
+                        for dx in range(8):
+                            if dx + spritex < 160 and y < 144:
+                                adjX = dx
+                                if xflip:
+                                    adjX = adjX ^ 7
+
+                                adjY = y - spritey
+                                if yflip:
+                                    adjY = adjY ^ 7
+
+                                col = spritepalette.getcolor(
+                                    self._tilecache[8 + (tileindex * 8) + adjY][adjX])
+
+                                if not col == 0:
+                                    self._screenbuffer[y][dx +
+                                                          spritex] = self.color_palette[col]
 
     def update_cache(self, lcd):
         if self.clearcache:
