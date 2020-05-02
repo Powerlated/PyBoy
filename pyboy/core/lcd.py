@@ -309,7 +309,7 @@ class Renderer:
 
         if lcd.LCDC.sprite_enable:
             # Render sprites
-            # - Doesn't restrict 10 sprites per scan line
+            spritecount = 0
             spriteheight = 16 if lcd.LCDC.sprite_height else 8
             bgpkey = self.color_palette[lcd.BGP.getcolor(0)]
 
@@ -321,6 +321,10 @@ class Renderer:
 
                 # Check if the sprite is on this scanline
                 if lcd.LY >= spritey and lcd.LY < spritey + spriteheight:
+                    spritecount += 1
+                    if spritecount > 10:
+                        break
+
                     tileindex = lcd.OAM[n + 2]
                     attributes = lcd.OAM[n + 3]
                     xflip = attributes & 0b00100000
