@@ -40,10 +40,9 @@ cdef class Motherboard:
 
     cdef void buttonevent(self, WindowEvent)
     cdef void stop(self, bint)
-    cdef void set_STAT_mode(self, int)
-    cdef void check_LYC(self, int)
+
     @cython.locals(cycles=cython.int)
-    cdef void calculate_cycles(self, int)
+    cdef int tick(self)
     cdef void tickframe(self)
 
     cdef uint8_t getitem(self, uint16_t)

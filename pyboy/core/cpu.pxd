@@ -45,7 +45,7 @@ cdef class CPU:
 
     @cython.locals(opcode=cython.ushort)
     cdef char fetch_and_execute(self, uint64_t)
-    cdef int tick(self)
+    cdef int execute(self)
     cdef void save_state(self, IntIOInterface)
     cdef void load_state(self, IntIOInterface, int)
 

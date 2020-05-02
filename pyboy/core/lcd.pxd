@@ -12,6 +12,8 @@ from pyboy.utils cimport IntIOInterface
 cdef uint16_t LCDC, STAT, SCY, SCX, LY, LYC, DMA, BGP, OBP0, OBP1, WY, WX
 cdef int ROWS, COLS, TILES, VIDEO_RAM, OBJECT_ATTRIBUTE_MEMORY
 
+cimport pyboy.core.mb
+
 
 cdef class LCD:
     cdef uint8_t[8 * 1024] VRAM
@@ -26,12 +28,18 @@ cdef class LCD:
     cdef PaletteRegister OBP0
     cdef PaletteRegister OBP1
 
+    cdef void tick(self, int)
+
+    cdef void set_STAT_mode(self, int)
+    cdef void check_LYC(self)
+
     cdef void save_state(self, IntIOInterface)
     cdef void load_state(self, IntIOInterface, int)
 
     cdef (int, int) getwindowpos(self)
     cdef (int, int) getviewport(self)
 
+    cdef pyboy.core.mb.Motherboard mb
 
 cdef class PaletteRegister:
     cdef LCD lcd

@@ -18,7 +18,7 @@
 
 
 class Timer:
-    def __init__(self):
+    def __init__(self, mb):
         self.DIV = 0 # Always showing self.counter with mode 3 divider
         self.TIMA = 0 # Can be set from RAM 0xFF05
         self.DIV_counter = 0
@@ -26,6 +26,8 @@ class Timer:
         self.TMA = 0
         self.TAC = 0
         self.dividers = [1024, 16, 64, 256]
+        
+        self.mb = mb
 
     def tick(self, cycles):
         self.DIV_counter += cycles
@@ -46,6 +48,8 @@ class Timer:
             if self.TIMA > 0xFF:
                 self.TIMA = self.TMA
                 self.TIMA &= 0xFF
+                
+                self.mb.cpu.set_interruptflag(2)
                 return True
 
         return False

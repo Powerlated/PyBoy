@@ -89,96 +89,17 @@ class Motherboard:
     # Coordinator
     #
 
-    # TODO: Move out of MB
-    def set_STAT_mode(self, mode):
-        self.setitem(STAT, self.getitem(STAT) & 0b11111100) # Clearing 2 LSB
-        self.setitem(STAT, self.getitem(STAT) | mode) # Apply mode to LSB
-
-        # Mode "3" is not interruptable
-        if self.cpu.test_ramregisterflag(STAT, mode + 3) and mode != 3:
-            self.cpu.set_interruptflag(LCDC)
-
-    # TODO: Move out of MB
-    def check_LYC(self, y):
-        self.setitem(LY, y)
-        if self.getitem(LYC) == y:
-            self.setitem(STAT, self.getitem(STAT) | 0b100) # Sets the LYC flag
-            if self.getitem(STAT) & 0b01000000:
-                self.cpu.set_interruptflag(LCDC)
-        else:
-            self.setitem(STAT, self.getitem(STAT) & 0b11111011)
-
-    def calculate_cycles(self, cycles_period):
-        self.cycles_remaining += cycles_period
-        while self.cycles_remaining > 0:
-            cycles = self.cpu.tick()
-
-            # TODO: Benchmark whether 'if' and 'try/except' is better
-            if cycles == -1: # CPU has HALTED
-                # Fast-forward to next interrupt:
-                # VBLANK and LCDC are covered by just returning.
-                # Timer has to be determined.
-                # As we are halted, we are guaranteed, that our state
-                # cannot be altered by other factors than time.
-                # For HiToLo interrupt it is indistinguishable whether
-                # it gets triggered mid-frame or by next frame
-                # Serial is not implemented, so this isn't a concern
-                cycles = min(self.timer.cyclestointerrupt(), self.cycles_remaining)
-
-                # Profiling
-                if self.cpu.profiling:
-                    self.cpu.hitrate[0x76] += cycles // 4
-
-            self.cycles_remaining -= cycles
-
-            if self.timer.tick(cycles):
-                self.cpu.set_interruptflag(TIMER)
+    def tick(self):
+        cycles = self.cpu.execute()
+        self.lcd.tick(cycles)
+        self.timer.tick(cycles)
+        return cycles
 
     def tickframe(self):
-        lcdenabled = self.lcd.LCDC.lcd_enable
-        if lcdenabled:
-            # TODO: the 19, 41 and 49._ticks should correct for longer instructions
-            # Iterate the 144 lines on screen
-            for y in range(144):
-                self.check_LYC(y)
-
-                # Mode 2
-                # TODO: Move out of MB
-                self.set_STAT_mode(2)
-                self.calculate_cycles(80)
-
-                # Mode 3
-                # TODO: Move out of MB
-                self.set_STAT_mode(3)
-                self.calculate_cycles(170)
-                self.renderer.scanline(y, self.lcd)
-
-                # Mode 0
-                # TODO: Move out of MB
-                self.set_STAT_mode(0)
-                self.calculate_cycles(206)
-
-            self.cpu.set_interruptflag(VBLANK)
-            if not self.disable_renderer:
-                self.renderer.render_screen(self.lcd)
-
-            # Wait for next frame
-            for y in range(144, 154):
-                self.check_LYC(y)
-
-                # Mode 1
-                self.set_STAT_mode(1)
-                self.calculate_cycles(456)
-        else:
-            # https://www.reddit.com/r/EmuDev/comments/6r6gf3
-            # TODO: What happens if LCD gets turned on/off mid-cycle?
-            self.renderer.blank_screen()
-            # TODO: Move out of MB
-            self.set_STAT_mode(0)
-            self.setitem(LY, 0)
-
-            for y in range(154):
-                self.calculate_cycles(456)
+        run = 70224
+        while run > 0:
+            run -= self.tick()
+        
 
     ###################################################################
     # MemoryManager

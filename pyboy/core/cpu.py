@@ -184,7 +184,7 @@ class CPU:
 
         return opcodes.execute_opcode(self, opcode)
 
-    def tick(self):
+    def execute(self):
         # "The interrupt will be acknowledged during opcode fetch
         # period of each instruction."
         did_interrupt = self.check_interrupts()
@@ -196,6 +196,6 @@ class CPU:
             # (DI) on the GB,GBP, and SGB.
             self.halted = False
         elif self.halted:
-            return -1
+            return 4
 
         return self.fetch_and_execute(self.PC)

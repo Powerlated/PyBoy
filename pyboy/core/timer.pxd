@@ -6,6 +6,7 @@
 from libc.stdint cimport uint8_t, uint16_t, uint32_t, uint64_t
 import cython
 
+cimport pyboy.core.mb
 
 cdef class Timer:
     cdef uint64_t DIV, TIMA, TMA, TAC
@@ -16,3 +17,5 @@ cdef class Timer:
     cdef bint tick(self, uint64_t)
     @cython.locals(divider=cython.int, cyclesleft=cython.uint)
     cdef uint64_t cyclestointerrupt(self)
+
+    cdef pyboy.core.mb.Motherboard mb

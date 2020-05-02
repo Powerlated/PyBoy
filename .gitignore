@@ -88,3 +88,6 @@ bootrom/PYBOY_ROM.bin
 
 test.replay
 ci_secrets.tar
+
+cpu_instrs
+.vscode

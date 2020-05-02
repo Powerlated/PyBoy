@@ -8,9 +8,10 @@ from ctypes import c_void_p
 
 from pyboy.utils import color_code
 
-VIDEO_RAM = 8 * 1024 # 8KB
+VIDEO_RAM = 8 * 1024  # 8KB
 OBJECT_ATTRIBUTE_MEMORY = 0xA0
-LCDC, STAT, SCY, SCX, LY, LYC, DMA, BGP, OBP0, OBP1, WY, WX = range(0xFF40, 0xFF4C)
+LCDC, STAT, SCY, SCX, LY, LYC, DMA, BGP, OBP0, OBP1, WY, WX = range(
+    0xFF40, 0xFF4C)
 ROWS, COLS = 144, 160
 TILES = 384
 
@@ -20,9 +21,11 @@ try:
 except ImportError:
     cythonmode = False
 
+HBLANK, VBLANK, OAM, VRAM = range(4)
+
 
 class LCD:
-    def __init__(self):
+    def __init__(self, mb):
         self.VRAM = array("B", [0] * VIDEO_RAM)
         self.OAM = array("B", [0] * OBJECT_ATTRIBUTE_MEMORY)
 
@@ -38,6 +41,95 @@ class LCD:
         self.OBP1 = PaletteRegister(0xFF)
         self.WY = 0x00
         self.WX = 0x00
+
+        self.mb = mb
+
+        self.clock = 0
+
+    def tick(self, cycles):
+        self.clock += cycles
+        if self.LCDC.lcd_enable:
+            mode = self.get_STAT_mode()
+            if mode == 2:
+                # Mode 2 - OAM Scan
+                if self.clock >= 80:
+                    self.clock -= 80
+                    self.set_STAT_mode(VRAM)
+
+            elif mode == 3:
+                # Mode 3 - Pixel Transfer
+                # TODO: Make Mode 3 variable length, can be extended
+                # by sprites, the window, and scroll X
+                if self.clock >= 172:
+                    self.clock -= 172
+
+                    self.mb.renderer.scanline(self.LY, self)
+                    self.set_STAT_mode(HBLANK)
+
+            elif mode == 0:
+                # Mode 0 - Hblank
+                if self.clock >= 204:
+                    self.clock -= 204
+
+                    self.LY += 1
+                    self.mb.setitem(LY, self.LY)
+
+                    # self.check_LYC()
+
+                    if (self.LY > 143):
+                        if not self.mb.disable_renderer:
+                            self.mb.renderer.render_screen(self)
+
+                        self.mb.cpu.set_interruptflag(0)
+                        self.set_STAT_mode(VBLANK)
+                    else:
+                        self.set_STAT_mode(OAM)
+            elif mode == 1:
+                # Mode 1 - Vblank
+                if self.clock >= 456:
+                    self.clock -= 456
+
+                    self.LY += 1
+                    self.mb.setitem(LY, self.LY)
+
+                    # self.check_LYC()
+
+                    if (self.LY > 153):
+                        self.LY = 0
+                        self.mb.setitem(LY, self.LY)
+
+                        self.set_STAT_mode(OAM)
+
+        else:
+            # self.mb.renderer.blank_screen()
+            self.clock = 0
+            self.LY = 0
+            self.mb.setitem(LY, self.LY)
+
+            self.set_STAT_mode(0)
+            self.mb.setitem(LY, 0)
+
+    def get_STAT_mode(self):
+        return self.mb.getitem(STAT) & 0b11
+
+    def set_STAT_mode(self, mode):
+        self.mb.setitem(STAT, self.mb.getitem(STAT) &
+                        0b11111100)  # Clearing 2 LSB
+        self.mb.setitem(STAT, self.mb.getitem(
+            STAT) | mode)  # Apply mode to LSB
+
+        # Mode "3" is not interruptable
+        if self.mb.cpu.test_ramregisterflag(STAT, mode + 3) and mode != 3:
+            self.mb.cpu.set_interruptflag(LCDC)
+
+    def check_LYC(self):
+        if self.mb.getitem(LYC) == self.LY:
+            self.mb.setitem(STAT, self.mb.getitem(
+                STAT) | 0b100)  # Sets the LYC flag
+            if self.mb.getitem(STAT) & 0b01000000:
+                self.cpu.set_interruptflag(LCDC)
+        else:
+            self.mb.setitem(STAT, self.mb.getitem(STAT) & 0b11111011)
 
     def save_state(self, f):
         for n in range(VIDEO_RAM):
@@ -109,19 +201,19 @@ class LCDCRegister:
 
         # No need to convert to bool. Any non-zero value is true.
         # yapf: disable
-        self.lcd_enable           = value & (1 << 7)
-        self.windowmap_select     = value & (1 << 6)
-        self.window_enable        = value & (1 << 5)
-        self.tiledata_select      = value & (1 << 4)
+        self.lcd_enable = value & (1 << 7)
+        self.windowmap_select = value & (1 << 6)
+        self.window_enable = value & (1 << 5)
+        self.tiledata_select = value & (1 << 4)
         self.backgroundmap_select = value & (1 << 3)
-        self.sprite_height        = value & (1 << 2)
-        self.sprite_enable        = value & (1 << 1)
-        self.background_enable    = value & (1 << 0)
+        self.sprite_height = value & (1 << 2)
+        self.sprite_enable = value & (1 << 1)
+        self.background_enable = value & (1 << 0)
         # yapf: enable
 
 
 class Renderer:
-    def __init__(self, color_palette):
+    def __init__(self, mb, color_palette):
         self.alphamask = 0xFF
         self.color_palette = [(c << 8) | self.alphamask for c in color_palette]
         self.color_format = "RGBA"
@@ -131,6 +223,8 @@ class Renderer:
         self.clearcache = False
         self.tiles_changed = set([])
 
+        self.mb = mb
+
         # Init buffers as white
         self._screenbuffer_raw = array("B", [0xFF] * (ROWS*COLS*4))
         self._tilecache_raw = array("B", [0xFF] * (TILES*8*8*4))
@@ -138,20 +232,28 @@ class Renderer:
         self._spritecache1_raw = array("B", [0xFF] * (TILES*8*8*4))
 
         if cythonmode:
-            self._screenbuffer = memoryview(self._screenbuffer_raw).cast("I", shape=(ROWS, COLS))
-            self._tilecache = memoryview(self._tilecache_raw).cast("I", shape=(TILES * 8, 8))
-            self._spritecache0 = memoryview(self._spritecache0_raw).cast("I", shape=(TILES * 8, 8))
-            self._spritecache1 = memoryview(self._spritecache1_raw).cast("I", shape=(TILES * 8, 8))
+            self._screenbuffer = memoryview(
+                self._screenbuffer_raw).cast("I", shape=(ROWS, COLS))
+            self._tilecache = memoryview(self._tilecache_raw).cast(
+                "I", shape=(TILES * 8, 8))
+            self._spritecache0 = memoryview(
+                self._spritecache0_raw).cast("I", shape=(TILES * 8, 8))
+            self._spritecache1 = memoryview(
+                self._spritecache1_raw).cast("I", shape=(TILES * 8, 8))
         else:
             v = memoryview(self._screenbuffer_raw).cast("I")
-            self._screenbuffer = [v[i:i + COLS] for i in range(0, COLS * ROWS, COLS)]
+            self._screenbuffer = [v[i:i + COLS]
+                                  for i in range(0, COLS * ROWS, COLS)]
             v = memoryview(self._tilecache_raw).cast("I")
             self._tilecache = [v[i:i + 8] for i in range(0, TILES * 8 * 8, 8)]
             v = memoryview(self._spritecache0_raw).cast("I")
-            self._spritecache0 = [v[i:i + 8] for i in range(0, TILES * 8 * 8, 8)]
+            self._spritecache0 = [v[i:i + 8]
+                                  for i in range(0, TILES * 8 * 8, 8)]
             v = memoryview(self._spritecache1_raw).cast("I")
-            self._spritecache1 = [v[i:i + 8] for i in range(0, TILES * 8 * 8, 8)]
-            self._screenbuffer_ptr = c_void_p(self._screenbuffer_raw.buffer_info()[0])
+            self._spritecache1 = [v[i:i + 8]
+                                  for i in range(0, TILES * 8 * 8, 8)]
+            self._screenbuffer_ptr = c_void_p(
+                self._screenbuffer_raw.buffer_info()[0])
 
         self._scanlineparameters = [[0, 0, 0, 0, 0] for _ in range(ROWS)]
 
@@ -178,21 +280,23 @@ class Renderer:
 
             for x in range(COLS):
                 if lcd.LCDC.window_enable and wy <= y and wx <= x:
-                    wt = lcd.VRAM[wmap + (y-wy) // 8 * 32 % 0x400 + (x-wx) // 8 % 32]
+                    wt = lcd.VRAM[wmap + (y-wy) // 8 * 32 %
+                                  0x400 + (x-wx) // 8 % 32]
                     # If using signed tile indices, modify index
                     if not lcd.LCDC.tiledata_select:
                         # (x ^ 0x80 - 128) to convert to signed, then
                         # add 256 for offset (reduces to + 128)
                         wt = (wt ^ 0x80) + 128
-                    self._screenbuffer[y][x] = self._tilecache[8*wt + (y-wy) % 8][(x-wx) % 8]
+                    self._screenbuffer[y][x] = self._tilecache[8 * wt + (y-wy) % 8][(x-wx) % 8]
                 elif lcd.LCDC.background_enable:
-                    bt = lcd.VRAM[background_offset + (y+by) // 8 * 32 % 0x400 + (x+bx) // 8 % 32]
+                    bt = lcd.VRAM[background_offset +
+                                  (y+by) // 8 * 32 % 0x400 + (x+bx) // 8 % 32]
                     # If using signed tile indices, modify index
                     if not tile_data_select:
                         # (x ^ 0x80 - 128) to convert to signed, then
                         # add 256 for offset (reduces to + 128)
                         bt = (bt ^ 0x80) + 128
-                    self._screenbuffer[y][x] = self._tilecache[8*bt + (y+by) % 8][(x+offset) % 8]
+                    self._screenbuffer[y][x] = self._tilecache[8 * bt + (y+by) % 8][(x+offset) % 8]
                 else:
                     # If background is disabled, it becomes white
                     self._screenbuffer[y][x] = self.color_palette[0]
@@ -208,14 +312,17 @@ class Renderer:
         bgpkey = self.color_palette[lcd.BGP.getcolor(0)]
 
         for n in range(0x00, 0xA0, 4):
-            y = lcd.OAM[n] - 16 # Documentation states the y coordinate needs to be subtracted by 16
-            x = lcd.OAM[n + 1] - 8 # Documentation states the x coordinate needs to be subtracted by 8
+            # Documentation states the y coordinate needs to be subtracted by 16
+            y = lcd.OAM[n] - 16
+            # Documentation states the x coordinate needs to be subtracted by 8
+            x = lcd.OAM[n + 1] - 8
             tileindex = lcd.OAM[n + 2]
             attributes = lcd.OAM[n + 3]
             xflip = attributes & 0b00100000
             yflip = attributes & 0b01000000
             spritepriority = (attributes & 0b10000000) and not ignore_priority
-            spritecache = (self._spritecache1 if attributes & 0b10000 else self._spritecache0)
+            spritecache = (self._spritecache1 if attributes &
+                           0b10000 else self._spritecache0)
 
             for dy in range(spriteheight):
                 yy = spriteheight - dy - 1 if yflip else dy
@@ -245,7 +352,7 @@ class Renderer:
             self.clearcache = False
 
         for t in self.tiles_changed:
-            for k in range(0, 16, 2): # 2 bytes for each line
+            for k in range(0, 16, 2):  # 2 bytes for each line
                 byte1 = lcd.VRAM[t + k - 0x8000]
                 byte2 = lcd.VRAM[t + k + 1 - 0x8000]
                 y = (t+k-0x8000) // 2
@@ -253,9 +360,12 @@ class Renderer:
                 for x in range(8):
                     colorcode = color_code(byte1, byte2, 7 - x)
 
-                    self._tilecache[y][x] = self.color_palette[lcd.BGP.getcolor(colorcode)]
-                    self._spritecache0[y][x] = self.color_palette[lcd.OBP0.getcolor(colorcode)]
-                    self._spritecache1[y][x] = self.color_palette[lcd.OBP1.getcolor(colorcode)]
+                    self._tilecache[y][x] = self.color_palette[lcd.BGP.getcolor(
+                        colorcode)]
+                    self._spritecache0[y][x] = self.color_palette[lcd.OBP0.getcolor(
+                        colorcode)]
+                    self._spritecache1[y][x] = self.color_palette[lcd.OBP1.getcolor(
+                        colorcode)]
 
                     if colorcode == 0:
                         self._spritecache0[y][x] &= ~self.alphamask
