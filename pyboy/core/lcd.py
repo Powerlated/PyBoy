@@ -9,6 +9,8 @@ from ctypes import c_void_p
 from pyboy.utils import color_code
 from pyboy.core import cpu
 
+import copy
+
 VIDEO_RAM = 8 * 1024  # 8KB
 OBJECT_ATTRIBUTE_MEMORY = 0xA0
 LCDC, STAT, SCY, SCX, LY, LYC, DMA, BGP, OBP0, OBP1, WY, WX = range(
@@ -25,6 +27,7 @@ except ImportError:
 
 ModeHBLANK, ModeVBLANK, ModeOAM, ModeVRAM = range(4)
 
+
 class LCD:
     def __init__(self, mb):
         self.VRAM = array("B", [0] * VIDEO_RAM)
@@ -34,7 +37,7 @@ class LCD:
         # self.STAT = 0x00
         self.SCY = 0x00
         self.SCX = 0x00
-        # self.LY = 0x00
+        self.LY = 0x00
         # self.LYC = 0x00
         # self.DMA = 0x00
         self.BGP = PaletteRegister(0xFC)
@@ -91,6 +94,7 @@ class LCD:
                         self.set_STAT_mode(ModeVBLANK)
                     else:
                         self.set_STAT_mode(ModeOAM)
+
             elif mode == 1:
                 # Mode 1 - Vblank
                 if self.clock >= 456:
@@ -99,14 +103,11 @@ class LCD:
                     self.LY += 1
                     self.mb.setitem(LY, self.LY)
 
-
                     if (self.LY > 153):
                         self.LY = 0
                         self.mb.setitem(LY, self.LY)
 
                         self.set_STAT_mode(ModeOAM)
-
-                    self.check_LYC()
 
         else:
             # self.mb.renderer.blank_screen()
@@ -123,7 +124,6 @@ class LCD:
             self.mb.setitem(STAT, self.mb.getitem(
                 STAT) | 0b100)  # Sets the LYC flag
             if self.mb.getitem(STAT) & 0b01000000:
-                print("IRQ STAT LY=LYC")
                 self.mb.cpu.set_interruptflag(cpu.LCDC)
         else:
             self.mb.setitem(STAT, self.mb.getitem(STAT) & 0b11111011)
@@ -246,26 +246,17 @@ class Renderer:
                 self._screenbuffer_raw).cast("I", shape=(ROWS, COLS))
             self._tilecache = memoryview(self._tilecache_raw).cast(
                 "I", shape=(TILES * 8, 8))
-            self._spritecache0 = memoryview(
-                self._spritecache0_raw).cast("I", shape=(TILES * 8, 8))
-            self._spritecache1 = memoryview(
-                self._spritecache1_raw).cast("I", shape=(TILES * 8, 8))
         else:
             v = memoryview(self._screenbuffer_raw).cast("I")
             self._screenbuffer = [v[i:i + COLS]
                                   for i in range(0, COLS * ROWS, COLS)]
             v = memoryview(self._tilecache_raw).cast("I")
             self._tilecache = [v[i:i + 8] for i in range(0, TILES * 8 * 8, 8)]
-            v = memoryview(self._spritecache0_raw).cast("I")
-            self._spritecache0 = [v[i:i + 8]
-                                  for i in range(0, TILES * 8 * 8, 8)]
-            v = memoryview(self._spritecache1_raw).cast("I")
-            self._spritecache1 = [v[i:i + 8]
-                                  for i in range(0, TILES * 8 * 8, 8)]
             self._screenbuffer_ptr = c_void_p(
                 self._screenbuffer_raw.buffer_info()[0])
 
-        self._scanlineparameters = [[0, 0, 0, 0, 0] for _ in range(ROWS)]
+        self._scanlineparameters = [[0, 0, 0, 0, LCDCRegister(0xFF), PaletteRegister(
+            0xFF), PaletteRegister(0xFF), PaletteRegister(0xFF)] for _ in range(ROWS)]
 
     def scanline(self, y, lcd):
         bx, by = lcd.getviewport()
@@ -274,46 +265,54 @@ class Renderer:
         self._scanlineparameters[y][1] = by
         self._scanlineparameters[y][2] = wx
         self._scanlineparameters[y][3] = wy
-        self._scanlineparameters[y][4] = lcd.LCDC.tiledata_select
+        self._scanlineparameters[y][4] = copy.deepcopy(lcd.LCDC)
+        self._scanlineparameters[y][5] = copy.deepcopy(lcd.BGP)
+        self._scanlineparameters[y][6] = copy.deepcopy(lcd.OBP0)
+        self._scanlineparameters[y][7] = copy.deepcopy(lcd.OBP1)
 
     def render_screen(self, lcd):
         self.update_cache(lcd)
         # All VRAM addresses are offset by 0x8000
         # Following addresses are 0x9800 and 0x9C00
-        background_offset = 0x1800 if lcd.LCDC.backgroundmap_select == 0 else 0x1C00
-        wmap = 0x1800 if lcd.LCDC.windowmap_select == 0 else 0x1C00
 
         for y in range(ROWS):
-            bx, by, wx, wy, tile_data_select = self._scanlineparameters[y]
+            bx, by, wx, wy, rowLCDC, rowBGP, rowOBP0, rowOBP1 = self._scanlineparameters[y]
+
+            background_offset = 0x1800 if rowLCDC.backgroundmap_select == 0 else 0x1C00
+            wmap = 0x1800 if rowLCDC.windowmap_select == 0 else 0x1C00
+
             # Used for the half tile at the left side when scrolling
             offset = bx & 0b111
 
             for x in range(COLS):
-                if lcd.LCDC.window_enable and wy <= y and wx <= x:
+                if rowLCDC.window_enable and wy <= y and wx <= x:
                     wt = lcd.VRAM[wmap + (y-wy) // 8 * 32 %
                                   0x400 + (x-wx) // 8 % 32]
                     # If using signed tile indices, modify index
-                    if not lcd.LCDC.tiledata_select:
+                    if not rowLCDC.tiledata_select:
                         # (x ^ 0x80 - 128) to convert to signed, then
                         # add 256 for offset (reduces to + 128)
                         wt = (wt ^ 0x80) + 128
-                    self._screenbuffer[y][x] = self._tilecache[8 *
-                                                               wt + (y-wy) % 8][(x-wx) % 8]
-                elif lcd.LCDC.background_enable:
+
+                    self._screenbuffer[y][x] = self.color_palette[rowBGP.getcolor(
+                        self._tilecache[8 * wt + (y-wy) % 8][(x-wx) & 7] & 3)]
+                elif rowLCDC.background_enable:
                     bt = lcd.VRAM[background_offset +
                                   (y+by) // 8 * 32 % 0x400 + (x+bx) // 8 % 32]
                     # If using signed tile indices, modify index
-                    if not tile_data_select:
+                    if not rowLCDC.tiledata_select:
                         # (x ^ 0x80 - 128) to convert to signed, then
                         # add 256 for offset (reduces to + 128)
                         bt = (bt ^ 0x80) + 128
-                    self._screenbuffer[y][x] = self._tilecache[8 *
-                                                               bt + (y+by) % 8][(x+offset) % 8]
+
+                    self._screenbuffer[y][x] = self.color_palette[rowBGP.getcolor(
+                        self._tilecache[8 * bt + (y+by) % 8][(x+offset) & 7] & 3)]
                 else:
                     # If background is disabled, it becomes white
                     self._screenbuffer[y][x] = self.color_palette[0]
 
-        if lcd.LCDC.sprite_enable:
+        # TODO: Scanline sprite rendering
+        if rowLCDC.sprite_enable:
             self.render_sprites(lcd, self._screenbuffer, False)
 
     def render_sprites(self, lcd, buffer, ignore_priority):
@@ -333,24 +332,25 @@ class Renderer:
             xflip = attributes & 0b00100000
             yflip = attributes & 0b01000000
             spritepriority = (attributes & 0b10000000) and not ignore_priority
-            spritecache = (self._spritecache1 if attributes &
-                           0b10000 else self._spritecache0)
+            spritepalette = (lcd.OBP1 if attributes &
+                             0b10000 else lcd.OBP0)
 
             for dy in range(spriteheight):
                 yy = spriteheight - dy - 1 if yflip else dy
                 if 0 <= y < ROWS:
                     for dx in range(8):
                         xx = 7 - dx if xflip else dx
-                        pixel = spritecache[8*tileindex + yy][xx]
+                        col = self._tilecache[8*tileindex + yy][xx]
+                        pixel = spritepalette.getcolor(col)
                         if 0 <= x < COLS:
                             # import pdb; pdb.set_trace()
                             # TODO: Checking `buffer[y][x] == bgpkey` is a bit of a hack
-                            if (spritepriority and not buffer[y][x] == bgpkey):
-                                # Add a fake alphachannel to the sprite for BG pixels. We can't just merge this
-                                # with the next 'if', as sprites can have an alpha channel in other ways
-                                pixel &= ~self.alphamask
+                            # if (spritepriority and not buffer[y][x] == bgpkey):
+                            # Add a fake alphachannel to the sprite for BG pixels. We can't just merge this
+                            # with the next 'if', as sprites can have an alpha channel in other ways
+                            # pixel &= ~self.alphamask
 
-                            if pixel & self.alphamask:
+                            if pixel:
                                 buffer[y][x] = pixel
                         x += 1
                     x -= 8
@@ -372,16 +372,7 @@ class Renderer:
                 for x in range(8):
                     colorcode = color_code(byte1, byte2, 7 - x)
 
-                    self._tilecache[y][x] = self.color_palette[lcd.BGP.getcolor(
-                        colorcode)]
-                    self._spritecache0[y][x] = self.color_palette[lcd.OBP0.getcolor(
-                        colorcode)]
-                    self._spritecache1[y][x] = self.color_palette[lcd.OBP1.getcolor(
-                        colorcode)]
-
-                    if colorcode == 0:
-                        self._spritecache0[y][x] &= ~self.alphamask
-                        self._spritecache1[y][x] &= ~self.alphamask
+                    self._tilecache[y][x] = colorcode
 
         self.tiles_changed.clear()
 
