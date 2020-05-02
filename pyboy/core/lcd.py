@@ -7,6 +7,7 @@ from array import array
 from ctypes import c_void_p
 
 from pyboy.utils import color_code
+from pyboy.core import cpu
 
 VIDEO_RAM = 8 * 1024  # 8KB
 OBJECT_ATTRIBUTE_MEMORY = 0xA0
@@ -21,8 +22,8 @@ try:
 except ImportError:
     cythonmode = False
 
-HBLANK, VBLANK, OAM, VRAM = range(4)
 
+ModeHBLANK, ModeVBLANK, ModeOAM, ModeVRAM = range(4)
 
 class LCD:
     def __init__(self, mb):
@@ -47,6 +48,8 @@ class LCD:
         self.clock = 0
 
     def tick(self, cycles):
+        # TODO: Implement Line 153 quirk
+
         self.clock += cycles
         if self.LCDC.lcd_enable:
             mode = self.get_STAT_mode()
@@ -54,7 +57,7 @@ class LCD:
                 # Mode 2 - OAM Scan
                 if self.clock >= 80:
                     self.clock -= 80
-                    self.set_STAT_mode(VRAM)
+                    self.set_STAT_mode(ModeVRAM)
 
             elif mode == 3:
                 # Mode 3 - Pixel Transfer
@@ -64,7 +67,11 @@ class LCD:
                     self.clock -= 172
 
                     self.mb.renderer.scanline(self.LY, self)
-                    self.set_STAT_mode(HBLANK)
+                    self.set_STAT_mode(ModeHBLANK)
+
+                    # Check for STAT Hblank interrupt
+                    if self.mb.getitem(STAT) & (1 << 3):
+                        self.mb.cpu.set_interruptflag(cpu.LCDC)
 
             elif mode == 0:
                 # Mode 0 - Hblank
@@ -72,18 +79,18 @@ class LCD:
                     self.clock -= 204
 
                     self.LY += 1
-                    self.mb.setitem(LY, self.LY)
+                    self.check_LYC()
 
-                    # self.check_LYC()
+                    self.mb.setitem(LY, self.LY)
 
                     if (self.LY > 143):
                         if not self.mb.disable_renderer:
                             self.mb.renderer.render_screen(self)
 
                         self.mb.cpu.set_interruptflag(0)
-                        self.set_STAT_mode(VBLANK)
+                        self.set_STAT_mode(ModeVBLANK)
                     else:
-                        self.set_STAT_mode(OAM)
+                        self.set_STAT_mode(ModeOAM)
             elif mode == 1:
                 # Mode 1 - Vblank
                 if self.clock >= 456:
@@ -92,13 +99,14 @@ class LCD:
                     self.LY += 1
                     self.mb.setitem(LY, self.LY)
 
-                    # self.check_LYC()
 
                     if (self.LY > 153):
                         self.LY = 0
                         self.mb.setitem(LY, self.LY)
 
-                        self.set_STAT_mode(OAM)
+                        self.set_STAT_mode(ModeOAM)
+
+                    self.check_LYC()
 
         else:
             # self.mb.renderer.blank_screen()
@@ -109,6 +117,17 @@ class LCD:
             self.set_STAT_mode(0)
             self.mb.setitem(LY, 0)
 
+    def check_LYC(self):
+        # LY=LYC
+        if self.mb.getitem(LYC) == self.LY:
+            self.mb.setitem(STAT, self.mb.getitem(
+                STAT) | 0b100)  # Sets the LYC flag
+            if self.mb.getitem(STAT) & 0b01000000:
+                print("IRQ STAT LY=LYC")
+                self.mb.cpu.set_interruptflag(cpu.LCDC)
+        else:
+            self.mb.setitem(STAT, self.mb.getitem(STAT) & 0b11111011)
+
     def get_STAT_mode(self):
         return self.mb.getitem(STAT) & 0b11
 
@@ -118,18 +137,9 @@ class LCD:
         self.mb.setitem(STAT, self.mb.getitem(
             STAT) | mode)  # Apply mode to LSB
 
-        # Mode "3" is not interruptable
-        if self.mb.cpu.test_ramregisterflag(STAT, mode + 3) and mode != 3:
-            self.mb.cpu.set_interruptflag(LCDC)
-
-    def check_LYC(self):
-        if self.mb.getitem(LYC) == self.LY:
-            self.mb.setitem(STAT, self.mb.getitem(
-                STAT) | 0b100)  # Sets the LYC flag
-            if self.mb.getitem(STAT) & 0b01000000:
-                self.cpu.set_interruptflag(LCDC)
-        else:
-            self.mb.setitem(STAT, self.mb.getitem(STAT) & 0b11111011)
+        # Mode 3 is definitely interruptable, there are many conditions
+        # where it will happen, such as when LY=LYC and the interrupt condition
+        # is enabled in the STAT register, firing the interrupt.
 
     def save_state(self, f):
         for n in range(VIDEO_RAM):
@@ -287,7 +297,8 @@ class Renderer:
                         # (x ^ 0x80 - 128) to convert to signed, then
                         # add 256 for offset (reduces to + 128)
                         wt = (wt ^ 0x80) + 128
-                    self._screenbuffer[y][x] = self._tilecache[8 * wt + (y-wy) % 8][(x-wx) % 8]
+                    self._screenbuffer[y][x] = self._tilecache[8 *
+                                                               wt + (y-wy) % 8][(x-wx) % 8]
                 elif lcd.LCDC.background_enable:
                     bt = lcd.VRAM[background_offset +
                                   (y+by) // 8 * 32 % 0x400 + (x+bx) // 8 % 32]
@@ -296,7 +307,8 @@ class Renderer:
                         # (x ^ 0x80 - 128) to convert to signed, then
                         # add 256 for offset (reduces to + 128)
                         bt = (bt ^ 0x80) + 128
-                    self._screenbuffer[y][x] = self._tilecache[8 * bt + (y+by) % 8][(x+offset) % 8]
+                    self._screenbuffer[y][x] = self._tilecache[8 *
+                                                               bt + (y+by) % 8][(x+offset) % 8]
                 else:
                     # If background is disabled, it becomes white
                     self._screenbuffer[y][x] = self.color_palette[0]
