@@ -70,8 +70,8 @@ class LCD:
                 # TODO: Make Mode 3 variable length, can be extended
                 # lcd.SCY sprites, the window, and scroll X
 
-                if not self.window_triggered and self.WX < 160 and self.LCDC.window_enable:
-                    self.window_line = self.WX - self.LY
+                if self.WY == self.LY and not self.window_triggered and self.WX < 160 and self.LCDC.window_enable:
+                    self.window_line = self.WY - self.LY
                     self.window_triggered = True
 
                 if self.clock >= 172:
@@ -284,7 +284,7 @@ class Renderer:
 
         for x in range(COLS):
             if lcd.LCDC.window_enable and lcd.WY <= lcd.LY and lcd.WX - 7 <= x:
-                wt = lcd.VRAM[wmap + (lcd.LY-lcd.WY) // 8 * 32 %
+                wt = lcd.VRAM[wmap + (lcd.window_line) // 8 * 32 %
                               0x400 + (x-lcd.WX+7) // 8 % 32]
                 # If using signed tile indices, modify index
                 if not lcd.LCDC.tiledata_select:
@@ -293,7 +293,7 @@ class Renderer:
                     wt = (wt ^ 0x80) + 128
 
                 self._screenbuffer[lcd.LY][x] = self.color_palette[lcd.BGP.getcolor(
-                    self._tilecache[8 * wt + (lcd.LY-lcd.WY) % 8][(x-lcd.WX+7) & 7] & 3)]
+                    self._tilecache[8 * wt + (lcd.window_line) % 8][(x-lcd.WX+7) & 7] & 3)]
             elif lcd.LCDC.background_enable:
                 bt = lcd.VRAM[background_offset +
                               (lcd.LY+lcd.SCY) // 8 * 32 % 0x400 + (x+lcd.SCX) // 8 % 32]
