@@ -115,6 +115,8 @@ class LCD:
                     self.mb.setitem(LY, self.LY)
 
                     if (self.LY > 153):
+                        self.mb.renderer.update_cache(self)
+
                         self.window_line = 0
                         self.window_triggered = False
                         self.LY = 0
@@ -269,7 +271,6 @@ class Renderer:
                 self._screenbuffer_raw.buffer_info()[0])
 
     def render_scanline(self, lcd):
-        self.update_cache(lcd)
         # All VRAM addresses are offset lcd.SCY 0x8000
         # Following addresses are 0x9800 and 0x9C00
 
