@@ -46,6 +46,9 @@ class LCD:
         self.WY = 0x00
         self.WX = 0x00
 
+        self.window_line = 0
+        self.window_triggered = False
+
         self.mb = mb
 
         self.clock = 0
@@ -65,12 +68,22 @@ class LCD:
             elif mode == 3:
                 # Mode 3 - Pixel Transfer
                 # TODO: Make Mode 3 variable length, can be extended
-                # by sprites, the window, and scroll X
+                # lcd.SCY sprites, the window, and scroll X
+
+                if not self.window_triggered and self.WX < 160 and self.LCDC.window_enable:
+                    self.window_line = self.WX - self.LY
+                    self.window_triggered = True
+
                 if self.clock >= 172:
                     self.clock -= 172
 
-                    self.mb.renderer.scanline(self.LY, self)
+                    if not self.mb.disable_renderer:
+                        self.mb.renderer.render_scanline(self)
+
                     self.set_STAT_mode(ModeHBLANK)
+
+                    if self.WX < 160 and self.LCDC.window_enable:
+                        self.window_line += 1
 
                     # Check for STAT Hblank interrupt
                     if self.mb.getitem(STAT) & (1 << 3):
@@ -87,8 +100,6 @@ class LCD:
                     self.mb.setitem(LY, self.LY)
 
                     if (self.LY > 143):
-                        if not self.mb.disable_renderer:
-                            self.mb.renderer.render_screen(self)
 
                         self.mb.cpu.set_interruptflag(0)
                         self.set_STAT_mode(ModeVBLANK)
@@ -104,6 +115,8 @@ class LCD:
                     self.mb.setitem(LY, self.LY)
 
                     if (self.LY > 153):
+                        self.window_line = 0
+                        self.window_triggered = False
                         self.LY = 0
                         self.mb.setitem(LY, self.LY)
 
@@ -256,112 +269,97 @@ class Renderer:
                 self._screenbuffer_raw.buffer_info()[0])
 
         self._scanlineparameters = [[0, 0, 0, 0, LCDCRegister(0xFF), PaletteRegister(
-            0xFF), PaletteRegister(0xFF), PaletteRegister(0xFF)] for _ in range(ROWS)]
+            0xFF), PaletteRegister(0xFF), PaletteRegister(0xFF), 0] for _ in range(ROWS)]
 
-    def scanline(self, y, lcd):
-        bx, by = lcd.getviewport()
-        wx, wy = lcd.getwindowpos()
-        self._scanlineparameters[y][0] = bx
-        self._scanlineparameters[y][1] = by
-        self._scanlineparameters[y][2] = wx
-        self._scanlineparameters[y][3] = wy
-        self._scanlineparameters[y][4] = copy.deepcopy(lcd.LCDC)
-        self._scanlineparameters[y][5] = copy.deepcopy(lcd.BGP)
-        self._scanlineparameters[y][6] = copy.deepcopy(lcd.OBP0)
-        self._scanlineparameters[y][7] = copy.deepcopy(lcd.OBP1)
-
-    def render_screen(self, lcd):
+    def render_scanline(self, lcd):
         self.update_cache(lcd)
-        # All VRAM addresses are offset by 0x8000
+        # All VRAM addresses are offset lcd.SCY 0x8000
         # Following addresses are 0x9800 and 0x9C00
 
-        for y in range(ROWS):
-            bx, by, wx, wy, rowLCDC, rowBGP, rowOBP0, rowOBP1 = self._scanlineparameters[y]
+        background_offset = 0x1800 if lcd.LCDC.backgroundmap_select == 0 else 0x1C00
+        wmap = 0x1800 if lcd.LCDC.windowmap_select == 0 else 0x1C00
 
-            background_offset = 0x1800 if rowLCDC.backgroundmap_select == 0 else 0x1C00
-            wmap = 0x1800 if rowLCDC.windowmap_select == 0 else 0x1C00
+        # Used for the half tile at the left side when scrolling
+        offset = lcd.SCX & 0b111
 
-            # Used for the half tile at the left side when scrolling
-            offset = bx & 0b111
+        for x in range(COLS):
+            if lcd.LCDC.window_enable and lcd.WY <= lcd.LY and lcd.WX - 7 <= x:
+                wt = lcd.VRAM[wmap + (lcd.LY-lcd.WY) // 8 * 32 %
+                              0x400 + (x-lcd.WX+7) // 8 % 32]
+                # If using signed tile indices, modify index
+                if not lcd.LCDC.tiledata_select:
+                    # (x ^ 0x80 - 128) to convert to signed, then
+                    # add 256 for offset (reduces to + 128)
+                    wt = (wt ^ 0x80) + 128
 
-            for x in range(COLS):
-                if rowLCDC.window_enable and wy <= y and wx <= x:
-                    wt = lcd.VRAM[wmap + (y-wy) // 8 * 32 %
-                                  0x400 + (x-wx) // 8 % 32]
-                    # If using signed tile indices, modify index
-                    if not rowLCDC.tiledata_select:
-                        # (x ^ 0x80 - 128) to convert to signed, then
-                        # add 256 for offset (reduces to + 128)
-                        wt = (wt ^ 0x80) + 128
+                self._screenbuffer[lcd.LY][x] = self.color_palette[lcd.BGP.getcolor(
+                    self._tilecache[8 * wt + (lcd.LY-lcd.WY) % 8][(x-lcd.WX+7) & 7] & 3)]
+            elif lcd.LCDC.background_enable:
+                bt = lcd.VRAM[background_offset +
+                              (lcd.LY+lcd.SCY) // 8 * 32 % 0x400 + (x+lcd.SCX) // 8 % 32]
+                # If using signed tile indices, modify index
+                if not lcd.LCDC.tiledata_select:
+                    # (x ^ 0x80 - 128) to convert to signed, then
+                    # add 256 for offset (reduces to + 128)
+                    bt = (bt ^ 0x80) + 128
 
-                    self._screenbuffer[y][x] = self.color_palette[rowBGP.getcolor(
-                        self._tilecache[8 * wt + (y-wy) % 8][(x-wx) & 7] & 3)]
-                elif rowLCDC.background_enable:
-                    bt = lcd.VRAM[background_offset +
-                                  (y+by) // 8 * 32 % 0x400 + (x+bx) // 8 % 32]
-                    # If using signed tile indices, modify index
-                    if not rowLCDC.tiledata_select:
-                        # (x ^ 0x80 - 128) to convert to signed, then
-                        # add 256 for offset (reduces to + 128)
-                        bt = (bt ^ 0x80) + 128
+                self._screenbuffer[lcd.LY][x] = self.color_palette[lcd.BGP.getcolor(
+                    self._tilecache[8 * bt + (lcd.LY+lcd.SCY) % 8][(x+offset) & 7] & 3)]
+            else:
+                # If background is disabled, it becomes white
+                self._screenbuffer[lcd.LY][x] = self.color_palette[0]
 
-                    self._screenbuffer[y][x] = self.color_palette[rowBGP.getcolor(
-                        self._tilecache[8 * bt + (y+by) % 8][(x+offset) & 7] & 3)]
-                else:
-                    # If background is disabled, it becomes white
-                    self._screenbuffer[y][x] = self.color_palette[0]
+        if lcd.LCDC.sprite_enable:
+            # Render sprites
+            # - Doesn't restrict 10 sprites per scan line
+            spriteheight = 16 if lcd.LCDC.sprite_height else 8
+            bgpkey = self.color_palette[lcd.BGP.getcolor(0)]
 
-            if rowLCDC.sprite_enable:
-                # Render sprites
-                # - Doesn't restrict 10 sprites per scan line
-                spriteheight = 16 if rowLCDC.sprite_height else 8
-                bgpkey = self.color_palette[lcd.BGP.getcolor(0)]
+            for n in range(0x00, 0xA0, 4):
+                # Documentation states the y coordinate needs to be subtracted lcd.SCY 16
+                spritey = lcd.OAM[n] - 16
+                # Documentation states the x coordinate needs to be subtracted lcd.SCY 8
+                spritex = lcd.OAM[n + 1] - 8
 
-                for n in range(0x00, 0xA0, 4):
-                    # Documentation states the y coordinate needs to be subtracted by 16
-                    spritey = lcd.OAM[n] - 16
-                    # Documentation states the x coordinate needs to be subtracted by 8
-                    spritex = lcd.OAM[n + 1] - 8
+                # Check if the sprite is on this scanline
+                if lcd.LY >= spritey and lcd.LY < spritey + spriteheight:
+                    tileindex = lcd.OAM[n + 2]
+                    attributes = lcd.OAM[n + 3]
+                    xflip = attributes & 0b00100000
+                    yflip = attributes & 0b01000000
+                    spritepriority = (
+                        attributes & 0b10000000) and not False
+                    spritepalette = (lcd.OBP1 if attributes &
+                                     0b10000 else lcd.OBP0)
 
-                    # Check if the sprite is on this scanline
-                    if y >= spritey and y < spritey + spriteheight:
-                        tileindex = lcd.OAM[n + 2]
-                        attributes = lcd.OAM[n + 3]
-                        xflip = attributes & 0b00100000
-                        yflip = attributes & 0b01000000
-                        spritepriority = (
-                            attributes & 0b10000000) and not False
-                        spritepalette = (rowOBP1 if attributes &
-                                         0b10000 else rowOBP0)
+                    # 16 height sprites: low bit ignored
+                    if lcd.LCDC.sprite_height:
+                        tileindex &= 0b11111110
 
-                        # 16 height sprites: low bit ignored
-                        if rowLCDC.sprite_height:
-                            tileindex &= 0b11111110
+                    if lcd.LCDC.sprite_height and yflip:
+                        if lcd.LY >= spritey + 8:
+                            tileindex -= 1
+                        else:
+                            tileindex += 1
 
-                        if rowLCDC.sprite_height and yflip:
-                            if y >= spritey + 8:
-                                tileindex -= 1
-                            else:
-                                tileindex += 1
+                    for dx in range(8):
+                        if dx + spritex < 160 and dx + spritex >= 0 and lcd.LY < 144:
+                            adjX = dx
+                            if xflip:
+                                adjX = adjX ^ 7
 
-                        for dx in range(8):
-                            if dx + spritex < 160 and dx + spritex >= 0 and y < 144:
-                                adjX = dx
-                                if xflip:
-                                    adjX = adjX ^ 7
+                            adjY = lcd.LY - spritey
+                            if yflip:
+                                adjY = adjY ^ 7
 
-                                adjY = y - spritey
-                                if yflip:
-                                    adjY = adjY ^ 7
+                            prepal = self._tilecache[(
+                                tileindex * 8) + adjY][adjX]
 
-                                prepal = self._tilecache[(
-                                    tileindex * 8) + adjY][adjX]
-
-                                if not prepal == 0:
-                                    col = spritepalette.getcolor(prepal)
-                                    if (spritepriority and self._screenbuffer[y][dx + spritex] == bgpkey) or not spritepriority:
-                                        self._screenbuffer[y][dx +
-                                                              spritex] = self.color_palette[col]
+                            if not prepal == 0:
+                                col = spritepalette.getcolor(prepal)
+                                if (spritepriority and self._screenbuffer[lcd.LY][dx + spritex] == bgpkey) or not spritepriority:
+                                    self._screenbuffer[lcd.LY][dx +
+                                                               spritex] = self.color_palette[col]
 
     def update_cache(self, lcd):
         if self.clearcache:
@@ -394,7 +392,7 @@ class Renderer:
         for y in range(ROWS):
             f.write(self._scanlineparameters[y][0])
             f.write(self._scanlineparameters[y][1])
-            # We store (WX - 7). We add 7 and mask 8 bits to make it easier to serialize
+            # We store (lcd.WX - 7). We add 7 and mask 8 bits to make it easier to serialize
             f.write((self._scanlineparameters[y][2] + 7) & 0xFF)
             f.write(self._scanlineparameters[y][3])
             f.write(self._scanlineparameters[y][4])
@@ -403,7 +401,7 @@ class Renderer:
         for y in range(ROWS):
             self._scanlineparameters[y][0] = f.read()
             self._scanlineparameters[y][1] = f.read()
-            # Restore (WX - 7) as described above
+            # Restore (lcd.WX - 7) as described above
             self._scanlineparameters[y][2] = (f.read() - 7) & 0xFF
             self._scanlineparameters[y][3] = f.read()
             if state_version > 3:
