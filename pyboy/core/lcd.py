@@ -40,9 +40,9 @@ class LCD:
         self.LY = 0x00
         # self.LYC = 0x00
         # self.DMA = 0x00
-        self.BGP = PaletteRegister(0xFC)
-        self.OBP0 = PaletteRegister(0xFF)
-        self.OBP1 = PaletteRegister(0xFF)
+        self.BGP = PaletteRegister(0x00)
+        self.OBP0 = PaletteRegister(0x00)
+        self.OBP1 = PaletteRegister(0x00)
         self.WY = 0x00
         self.WX = 0x00
 
@@ -387,6 +387,6 @@ class Renderer:
 
     def save_state(self, f):
         return
-    
+
     def load_state(self, f, state_version):
         return
