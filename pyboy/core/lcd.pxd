@@ -28,6 +28,9 @@ cdef class LCD:
     cdef PaletteRegister OBP0
     cdef PaletteRegister OBP1
 
+    cdef int clock
+    cdef int LY
+
     cdef void tick(self, int)
 
     cdef void set_STAT_mode(self, int)
@@ -135,3 +138,5 @@ cdef class Renderer:
 
     cdef void save_state(self, IntIOInterface)
     cdef void load_state(self, IntIOInterface, int)
+
+    cdef pyboy.core.mb.Motherboard mb

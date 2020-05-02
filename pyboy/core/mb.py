@@ -23,14 +23,14 @@ class Motherboard:
         if profiling:
             logger.info("Profiling enabled")
 
-        self.timer = timer.Timer()
+        self.timer = timer.Timer(self)
         self.interaction = interaction.Interaction()
         self.cartridge = cartridge.load_cartridge(gamerom_file)
         self.bootrom = bootrom.BootROM(bootrom_file)
         self.ram = ram.RAM(random=False)
         self.cpu = cpu.CPU(self, profiling)
-        self.lcd = lcd.LCD()
-        self.renderer = lcd.Renderer(color_palette)
+        self.lcd = lcd.LCD(self)
+        self.renderer = lcd.Renderer(self, color_palette)
         self.disable_renderer = disable_renderer
         self.bootrom_enabled = True
         self.serialbuffer = ""
