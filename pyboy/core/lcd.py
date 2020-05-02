@@ -70,7 +70,7 @@ class LCD:
                 # TODO: Make Mode 3 variable length, can be extended
                 # lcd.SCY sprites, the window, and scroll X
 
-                if self.WY == self.LY and not self.window_triggered and self.WX < 160 and self.LCDC.window_enable:
+                if self.WY == self.LY and not self.window_triggered and self.WX < 166 and self.LCDC.window_enable:
                     self.window_line = self.WY - self.LY
                     self.window_triggered = True
 
@@ -82,7 +82,7 @@ class LCD:
 
                     self.set_STAT_mode(ModeHBLANK)
 
-                    if self.WX < 160 and self.LCDC.window_enable:
+                    if self.WX < 166 and self.LCDC.window_enable and self.LY >= self.WY:
                         self.window_line += 1
 
                     # Check for STAT Hblank interrupt
