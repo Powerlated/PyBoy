@@ -268,9 +268,6 @@ class Renderer:
             self._screenbuffer_ptr = c_void_p(
                 self._screenbuffer_raw.buffer_info()[0])
 
-        self._scanlineparameters = [[0, 0, 0, 0, LCDCRegister(0xFF), PaletteRegister(
-            0xFF), PaletteRegister(0xFF), PaletteRegister(0xFF), 0] for _ in range(ROWS)]
-
     def render_scanline(self, lcd):
         self.update_cache(lcd)
         # All VRAM addresses are offset lcd.SCY 0x8000
@@ -389,20 +386,7 @@ class Renderer:
                 self._screenbuffer[y][x] = color
 
     def save_state(self, f):
-        for y in range(ROWS):
-            f.write(self._scanlineparameters[y][0])
-            f.write(self._scanlineparameters[y][1])
-            # We store (lcd.WX - 7). We add 7 and mask 8 bits to make it easier to serialize
-            f.write((self._scanlineparameters[y][2] + 7) & 0xFF)
-            f.write(self._scanlineparameters[y][3])
-            f.write(self._scanlineparameters[y][4])
-
+        return
+    
     def load_state(self, f, state_version):
-        for y in range(ROWS):
-            self._scanlineparameters[y][0] = f.read()
-            self._scanlineparameters[y][1] = f.read()
-            # Restore (lcd.WX - 7) as described above
-            self._scanlineparameters[y][2] = (f.read() - 7) & 0xFF
-            self._scanlineparameters[y][3] = f.read()
-            if state_version > 3:
-                self._scanlineparameters[y][4] = f.read()
+        return
