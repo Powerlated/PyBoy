@@ -315,20 +315,17 @@ class Renderer:
                 # Render sprites
                 # - Doesn't restrict 10 sprites per scan line
                 spriteheight = 16 if rowLCDC.sprite_height else 8
+                bgpkey = self.color_palette[lcd.BGP.getcolor(0)]
 
                 for n in range(0x00, 0xA0, 4):
-                    spritey = lcd.OAM[n] - spriteheight
+                    # Documentation states the y coordinate needs to be subtracted by 16
+                    spritey = lcd.OAM[n] - 16
                     # Documentation states the x coordinate needs to be subtracted by 8
                     spritex = lcd.OAM[n + 1] - 8
 
                     # Check if the sprite is on this scanline
-                    if spritey > y and spritey <= y + spriteheight:
+                    if y >= spritey and y < spritey + spriteheight:
                         tileindex = lcd.OAM[n + 2]
-
-                        # 16 height sprites: low bit ignored
-                        if rowLCDC.sprite_height:
-                            tileindex &= 0b11111110
-
                         attributes = lcd.OAM[n + 3]
                         xflip = attributes & 0b00100000
                         yflip = attributes & 0b01000000
@@ -337,8 +334,18 @@ class Renderer:
                         spritepalette = (rowOBP1 if attributes &
                                          0b10000 else rowOBP0)
 
+                        # 16 height sprites: low bit ignored
+                        if rowLCDC.sprite_height:
+                            tileindex &= 0b11111110
+
+                        if rowLCDC.sprite_height and yflip:
+                            if y >= spritey + 8:
+                                tileindex -= 1
+                            else:
+                                tileindex += 1
+
                         for dx in range(8):
-                            if dx + spritex < 160 and y < 144:
+                            if dx + spritex < 160 and dx + spritex >= 0 and y < 144:
                                 adjX = dx
                                 if xflip:
                                     adjX = adjX ^ 7
@@ -347,12 +354,14 @@ class Renderer:
                                 if yflip:
                                     adjY = adjY ^ 7
 
-                                col = spritepalette.getcolor(
-                                    self._tilecache[8 + (tileindex * 8) + adjY][adjX])
+                                prepal = self._tilecache[(
+                                    tileindex * 8) + adjY][adjX]
 
-                                if not col == 0:
-                                    self._screenbuffer[y][dx +
-                                                          spritex] = self.color_palette[col]
+                                if not prepal == 0:
+                                    col = spritepalette.getcolor(prepal)
+                                    if (spritepriority and self._screenbuffer[y][dx + spritex] == bgpkey) or not spritepriority:
+                                        self._screenbuffer[y][dx +
+                                                              spritex] = self.color_palette[col]
 
     def update_cache(self, lcd):
         if self.clearcache:
