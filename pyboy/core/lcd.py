@@ -122,6 +122,7 @@ class LCD:
                     self.mb.setitem(LY, self.LY)
 
                     if (self.LY > 153):
+                        self.mb.renderer.swap_buffers()
                         self.mb.renderer.update_cache(self)
 
                         self.window_line = 0
@@ -262,24 +263,47 @@ class Renderer:
         self.mb = mb
 
         # Init buffers as white
-        self._screenbuffer_raw = array("B", [0xFF] * (ROWS*COLS*4))
+        self._screenbuffer0_raw = array("B", [0xFF] * (ROWS*COLS*4))
+        self._screenbuffer1_raw = array("B", [0xFF] * (ROWS*COLS*4))
+
         self._tilecache_raw = array("B", [0xFF] * (TILES*8*8*4))
-        self._spritecache0_raw = array("B", [0xFF] * (TILES*8*8*4))
-        self._spritecache1_raw = array("B", [0xFF] * (TILES*8*8*4))
 
         if cythonmode:
-            self._screenbuffer = memoryview(
-                self._screenbuffer_raw).cast("I", shape=(ROWS, COLS))
+            self._screenbuffer0 = memoryview(
+                self._screenbuffer0_raw).cast("I", shape=(ROWS, COLS))
+            self._screenbuffer1 = memoryview(
+                self._screenbuffer1_raw).cast("I", shape=(ROWS, COLS))
+            self._screenbuffer = self._screenbuffer0
             self._tilecache = memoryview(self._tilecache_raw).cast(
                 "I", shape=(TILES * 8, 8))
         else:
-            v = memoryview(self._screenbuffer_raw).cast("I")
-            self._screenbuffer = [v[i:i + COLS]
-                                  for i in range(0, COLS * ROWS, COLS)]
+            v = memoryview(self._screenbuffer0_raw).cast("I")
+            self._screenbuffer0 = [v[i:i + COLS]
+                                   for i in range(0, COLS * ROWS, COLS)]
+            v = memoryview(self._screenbuffer1_raw).cast("I")
+            self._screenbuffer1 = [v[i:i + COLS]
+                                   for i in range(0, COLS * ROWS, COLS)]
+            self._screenbuffer = self._screenbuffer0
             v = memoryview(self._tilecache_raw).cast("I")
             self._tilecache = [v[i:i + 8] for i in range(0, TILES * 8 * 8, 8)]
             self._screenbuffer_ptr = c_void_p(
-                self._screenbuffer_raw.buffer_info()[0])
+                self._screenbuffer0_raw.buffer_info()[0])
+
+    def swap_buffers(self):
+        if self._screenbuffer == self._screenbuffer0:
+            # Set rendering buffer
+            self._screenbuffer = self._screenbuffer1
+            
+            # Set SDL buffer
+            self._screenbuffer_ptr = c_void_p(
+                self._screenbuffer0_raw.buffer_info()[0])
+        else:
+            # Set rendering buffer
+            self._screenbuffer = self._screenbuffer0
+
+            # Set SDL buffer
+            self._screenbuffer_ptr = c_void_p(
+                self._screenbuffer1_raw.buffer_info()[0])
 
     def render_scanline(self, lcd):
         # All VRAM addresses are offset lcd.SCY 0x8000
