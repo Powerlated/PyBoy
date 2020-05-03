@@ -293,7 +293,7 @@ class Renderer:
         if self._screenbuffer == self._screenbuffer0:
             # Set rendering buffer
             self._screenbuffer = self._screenbuffer1
-            
+
             # Set SDL buffer
             self._screenbuffer_ptr = c_void_p(
                 self._screenbuffer0_raw.buffer_info()[0])
@@ -315,32 +315,34 @@ class Renderer:
         # Used for the half tile at the left side when scrolling
         offset = lcd.SCX & 0b111
 
+        buffer_row = self._screenbuffer[lcd.LY]
+
         for x in range(COLS):
             if lcd.LCDC.window_enable and lcd.WY <= lcd.LY and lcd.WX - 7 <= x:
-                wt = lcd.VRAM[wmap + (lcd.window_line) // 8 * 32 %
-                              0x400 + (x-lcd.WX+7) // 8 % 32]
+                wt = lcd.VRAM[wmap + (((lcd.window_line) // 8 * 32)
+                                      & 0x3FF) + ((x-lcd.WX+7) // 8 & 31)]
                 # If using signed tile indices, modify index
                 if not lcd.LCDC.tiledata_select:
                     # (x ^ 0x80 - 128) to convert to signed, then
                     # add 256 for offset (reduces to + 128)
                     wt = (wt ^ 0x80) + 128
 
-                self._screenbuffer[lcd.LY][x] = self.color_palette[lcd.BGP.getcolor(
-                    self._tilecache[8 * wt + (lcd.window_line) % 8][(x-lcd.WX+7) & 7] & 3)]
+                buffer_row[x] = self.color_palette[lcd.BGP.getcolor(
+                    self._tilecache[(8 * wt) + (lcd.window_line & 7)][(x-lcd.WX+7) & 7] & 3)]
             elif lcd.LCDC.background_enable:
                 bt = lcd.VRAM[background_offset +
-                              (lcd.LY+lcd.SCY) // 8 * 32 % 0x400 + (x+lcd.SCX) // 8 % 32]
+                              (((lcd.LY+lcd.SCY) // 8 * 32) & 0x3FF) + ((x+lcd.SCX) // 8 & 31)]
                 # If using signed tile indices, modify index
                 if not lcd.LCDC.tiledata_select:
                     # (x ^ 0x80 - 128) to convert to signed, then
                     # add 256 for offset (reduces to + 128)
                     bt = (bt ^ 0x80) + 128
 
-                self._screenbuffer[lcd.LY][x] = self.color_palette[lcd.BGP.getcolor(
-                    self._tilecache[8 * bt + (lcd.LY+lcd.SCY) % 8][(x+offset) & 7] & 3)]
+                buffer_row[x] = self.color_palette[lcd.BGP.getcolor(
+                    self._tilecache[(8 * bt) + (lcd.LY+lcd.SCY & 7)][(x+offset) & 7] & 3)]
             else:
                 # If background is disabled, it becomes white
-                self._screenbuffer[lcd.LY][x] = self.color_palette[0]
+                buffer_row[x] = self.color_palette[0]
 
         if lcd.LCDC.sprite_enable:
             # Render sprites
