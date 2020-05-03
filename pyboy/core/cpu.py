@@ -172,17 +172,14 @@ class CPU:
         )
 
     def fetch_and_execute(self, pc):
+        # TODO: Readd profiling
         opcode = self.mb.getitem(pc)
         if opcode == 0xCB: # Extension code
             pc += 1
             opcode = self.mb.getitem(pc)
-            opcode += 0x100 # Internally shifting look-up table
-
-        # Profiling
-        if self.profiling:
-            self.hitrate[opcode] += 1
-
-        return opcodes.execute_opcode(self, opcode)
+            return opcodes.execute_cb_prefixed_opcode(self, opcode)
+        else:
+            return opcodes.execute_unprefixed_opcode(self, opcode)
 
     def execute(self):
         # "The interrupt will be acknowledged during opcode fetch
