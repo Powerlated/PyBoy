@@ -18,6 +18,8 @@ LCDC, STAT, SCY, SCX, LY, LYC, DMA, BGP, OBP0, OBP1, WY, WX = range(
 ROWS, COLS = 144, 160
 TILES = 384
 
+VBLANK, LCDC, TIMER, SERIAL, HIGHTOLOW = range(5)
+
 try:
     from cython import compiled
     cythonmode = compiled
@@ -87,7 +89,7 @@ class LCD:
 
                     # Check for STAT Hblank interrupt
                     if self.mb.getitem(STAT) & (1 << 3):
-                        self.mb.cpu.set_interruptflag(cpu.LCDC)
+                        self.mb.cpu.set_interruptflag(LCDC)
 
             elif mode == 0:
                 # Mode 0 - Hblank
@@ -102,16 +104,18 @@ class LCD:
                     if (self.LY > 143):
                         self.mb.cpu.set_interruptflag(0)
                         self.set_STAT_mode(ModeVBLANK)
+                        self.mb.renderer.swap_buffers()
+                        self.mb.cpu.set_interruptflag(VBLANK)
 
                         # Check for STAT Vblank interrupt
                         if self.mb.getitem(STAT) & (1 << 4):
-                            self.mb.cpu.set_interruptflag(cpu.LCDC)
+                            self.mb.cpu.set_interruptflag(LCDC)
                     else:
                         self.set_STAT_mode(ModeOAM)
 
                         # Check for STAT OAM interrupt
                         if self.mb.getitem(STAT) & (1 << 5):
-                            self.mb.cpu.set_interruptflag(cpu.LCDC)
+                            self.mb.cpu.set_interruptflag(LCDC)
 
             elif mode == 1:
                 # Mode 1 - Vblank
@@ -122,7 +126,6 @@ class LCD:
                     self.mb.setitem(LY, self.LY)
 
                     if (self.LY > 153):
-                        self.mb.renderer.swap_buffers()
                         self.mb.renderer.update_cache(self)
 
                         self.window_line = 0
@@ -134,7 +137,7 @@ class LCD:
 
                         # Check for STAT OAM interrupt
                         if self.mb.getitem(STAT) & (1 << 5):
-                            self.mb.cpu.set_interruptflag(cpu.LCDC)
+                            self.mb.cpu.set_interruptflag(LCDC)
 
         else:
             # self.mb.renderer.blank_screen()
@@ -151,7 +154,7 @@ class LCD:
             self.mb.setitem(STAT, self.mb.getitem(
                 STAT) | 0b100)  # Sets the LYC flag
             if self.mb.getitem(STAT) & 0b01000000:
-                self.mb.cpu.set_interruptflag(cpu.LCDC)
+                self.mb.cpu.set_interruptflag(LCDC)
         else:
             self.mb.setitem(STAT, self.mb.getitem(STAT) & 0b11111011)
 
@@ -273,7 +276,6 @@ class Renderer:
                 self._screenbuffer0_raw).cast("I", shape=(ROWS, COLS))
             self._screenbuffer1 = memoryview(
                 self._screenbuffer1_raw).cast("I", shape=(ROWS, COLS))
-            self._screenbuffer = self._screenbuffer0
             self._tilecache = memoryview(self._tilecache_raw).cast(
                 "I", shape=(TILES * 8, 8))
         else:
@@ -283,27 +285,45 @@ class Renderer:
             v = memoryview(self._screenbuffer1_raw).cast("I")
             self._screenbuffer1 = [v[i:i + COLS]
                                    for i in range(0, COLS * ROWS, COLS)]
-            self._screenbuffer = self._screenbuffer0
             v = memoryview(self._tilecache_raw).cast("I")
             self._tilecache = [v[i:i + 8] for i in range(0, TILES * 8 * 8, 8)]
             self._screenbuffer_ptr = c_void_p(
                 self._screenbuffer0_raw.buffer_info()[0])
 
-    def swap_buffers(self):
-        if self._screenbuffer == self._screenbuffer0:
-            # Set rendering buffer
-            self._screenbuffer = self._screenbuffer1
+        self.current_buffer = 0
 
-            # Set SDL buffer
-            self._screenbuffer_ptr = c_void_p(
-                self._screenbuffer0_raw.buffer_info()[0])
+    def get_screenbuffer_for_drawing(self):
+        if self.current_buffer == 0:
+            return self._screenbuffer0
         else:
-            # Set rendering buffer
-            self._screenbuffer = self._screenbuffer0
+            return self._screenbuffer1
 
+    def get_screenbuffer(self):
+        if self.current_buffer == 0:
+            return self._screenbuffer1
+        else:
+            return self._screenbuffer0
+
+    def get_screenbuffer_raw(self):
+        # Send the buffer not being drawn to, which has a complete frame
+        if self.current_buffer == 0:
+            return self._screenbuffer1_raw
+        else:
+            return self._screenbuffer0_raw
+
+    def swap_buffers(self):
+        if self.current_buffer == 0:
             # Set SDL buffer
-            self._screenbuffer_ptr = c_void_p(
-                self._screenbuffer1_raw.buffer_info()[0])
+            self.current_buffer = 1
+            if not cythonmode:
+                self._screenbuffer_ptr = c_void_p(
+                    self._screenbuffer0_raw.buffer_info()[0])
+        else:
+            # Set SDL buffer
+            self.current_buffer = 0
+            if not cythonmode:
+                self._screenbuffer_ptr = c_void_p(
+                    self._screenbuffer1_raw.buffer_info()[0])
 
     def render_scanline(self, lcd):
         # All VRAM addresses are offset lcd.SCY 0x8000
@@ -315,7 +335,7 @@ class Renderer:
         # Used for the half tile at the left side when scrolling
         offset = lcd.SCX & 0b111
 
-        buffer_row = self._screenbuffer[lcd.LY]
+        buffer_row = self.get_screenbuffer_for_drawing()[lcd.LY]
 
         for x in range(COLS):
             if lcd.LCDC.window_enable and lcd.WY <= lcd.LY and lcd.WX - 7 <= x:
@@ -396,9 +416,9 @@ class Renderer:
 
                             if not prepal == 0:
                                 col = spritepalette.getcolor(prepal)
-                                if (spritepriority and self._screenbuffer[lcd.LY][dx + spritex] == bgpkey) or not spritepriority:
-                                    self._screenbuffer[lcd.LY][dx +
-                                                               spritex] = self.color_palette[col]
+                                if (spritepriority and buffer_row[dx + spritex] == bgpkey) or not spritepriority:
+                                    buffer_row[dx +
+                                               spritex] = self.color_palette[col]
 
     def update_cache(self, lcd):
         if self.clearcache:
@@ -425,7 +445,7 @@ class Renderer:
         color = self.color_palette[0]
         for y in range(ROWS):
             for x in range(COLS):
-                self._screenbuffer[y][x] = color
+                self.get_screenbuffer_for_drawing()[y][x] = color
 
     def save_state(self, f):
         return

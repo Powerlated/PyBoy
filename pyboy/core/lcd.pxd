@@ -13,7 +13,7 @@ cdef uint16_t LCDC, STAT, SCY, SCX, LY, LYC, DMA, BGP, OBP0, OBP1, WY, WX
 cdef int ROWS, COLS, TILES, VIDEO_RAM, OBJECT_ATTRIBUTE_MEMORY
 
 cimport pyboy.core.mb
-
+cimport pyboy.core.cpu
 
 cdef class LCD:
     cdef uint8_t[8 * 1024] VRAM
@@ -41,6 +41,9 @@ cdef class LCD:
 
     cdef (int, int) getwindowpos(self)
     cdef (int, int) getviewport(self)
+
+    cdef bint window_triggered
+    cdef int window_line
 
     cdef pyboy.core.mb.Motherboard mb
 
@@ -79,15 +82,16 @@ cdef class Renderer:
     cdef bint clearcache
     cdef set tiles_changed
 
-    cdef array _screenbuffer_raw
+    cdef int current_buffer
+
+    cdef array _screenbuffer0_raw
+    cdef array _screenbuffer1_raw
     cdef array _tilecache_raw, _spritecache0_raw, _spritecache1_raw
-    cdef uint32_t[:,:] _screenbuffer
+    cdef uint32_t[:,:] _screenbuffer0
+    cdef uint32_t[:,:] _screenbuffer1
     cdef uint32_t[:,:] _tilecache, _spritecache0, _spritecache1
 
     cdef int[144][5] _scanlineparameters
-
-    @cython.locals(bx=int, by=int, wx=int, wy=int)
-    cdef void scanline(self, int, LCD)
 
     @cython.locals(
         y=int,
@@ -101,10 +105,6 @@ cdef class Renderer:
         wt=int,
         bt=int,
         offset=int,
-    )
-    cdef void render_screen(self, LCD)
-
-    @cython.locals(
         y=int,
         x=int,
         bgpkey=uint32_t,
@@ -122,7 +122,7 @@ cdef class Renderer:
         xx=int,
         pixel=uint32_t,
     )
-    cdef void render_sprites(self, LCD, uint32_t[:,:], bint)
+    cdef void render_scanline(self, LCD)
 
     @cython.locals(
         x=int,

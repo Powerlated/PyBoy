@@ -34,6 +34,9 @@ cdef class WindowSDL2(PyBoyWindowPlugin):
     cdef bint frame_limiter(self, int)
 
     cdef inline void _update_display(self):
-        sdl2.SDL_UpdateTexture(self._sdltexturebuffer, NULL, self.renderer._screenbuffer_raw.data.as_voidptr, 160*4)
+        if (self.renderer.current_buffer == 1):
+            sdl2.SDL_UpdateTexture(self._sdltexturebuffer, NULL, self.renderer._screenbuffer0_raw.data.as_voidptr, 160*4)
+        else:
+            sdl2.SDL_UpdateTexture(self._sdltexturebuffer, NULL, self.renderer._screenbuffer1_raw.data.as_voidptr, 160*4)
         sdl2.SDL_RenderCopy(self._sdlrenderer, self._sdltexturebuffer, NULL, NULL)
         sdl2.SDL_RenderPresent(self._sdlrenderer)

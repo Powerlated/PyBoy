@@ -77,7 +77,7 @@ class Screen:
         bytes:
             92160 bytes of screen data in a `bytes` object.
         """
-        return self.mb.renderer._screenbuffer_raw.tobytes()
+        return self.mb.renderer.get_screenbuffer_raw().tobytes()
 
     def raw_screen_buffer_dims(self):
         """
