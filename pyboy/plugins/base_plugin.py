@@ -138,6 +138,12 @@ class PyBoyGameWrapper(PyBoyPlugin):
         """
         raise NotImplementedError("reset_game not implemented in game wrapper")
 
+    def game_over(self):
+        """
+        After calling `start_game`, you can call this method at any time to know if the game is over.
+        """
+        raise NotImplementedError("game_over not implemented in game wrapper")
+
     def _sprites_on_screen(self):
         if self._sprite_cache_invalid:
             self._cached_sprites_on_screen = []
@@ -193,6 +199,22 @@ class PyBoyGameWrapper(PyBoyPlugin):
             if 0 <= _y < height and 0 <= _x < width:
                 tiles_matrix[_y][_x] = s.tile_identifier
         return tiles_matrix
+
+    def _game_area_np(self, observation_type='tiles'):
+        if observation_type == 'tiles':
+            return np.asarray(self.game_area(), dtype=np.uint16)
+        elif observation_type == 'compressed':
+            try:
+                return self.tiles_compressed[np.asarray(self.game_area(), dtype=np.uint16)]
+            except AttributeError:
+                raise AttributeError(f'Game wrapper miss the attribute tiles_compressed for observation_type : {observation_type}')
+        elif observation_type == 'minimal':
+            try:
+                return self.tiles_minimal[np.asarray(self.game_area(), dtype=np.uint16)]
+            except AttributeError:
+                raise AttributeError(f'Game wrapper miss the attribute tiles_minimal for observation_type : {observation_type}')
+        else:
+            raise ValueError(f'Invalid observation_type : {observation_type}')
 
     def _sum_number_on_screen(self, x, y, length, blank_tile_identifier, tile_identifier_offset):
         number = 0
