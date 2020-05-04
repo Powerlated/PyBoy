@@ -17,7 +17,7 @@ cimport pyboy.core.interaction
 cimport pyboy.core.sound
 from pyboy.utils cimport WindowEvent
 
-
+cdef short FLAGC, FLAGH, FLAGN, FLAGZ
 cdef uint16_t STAT, LY, LYC
 
 cdef (int, int) _dummy_declaration

@@ -12,7 +12,7 @@ from . import bootrom, cartridge, cpu, interaction, lcd, ram, sound, timer
 logger = logging.getLogger(__name__)
 
 STAT, _, _, LY, LYC = range(0xFF41, 0xFF46)
-
+VBLANK, LCDC, TIMER, SERIAL, HIGHTOLOW = range(5)
 
 class Motherboard:
     def __init__(self, gamerom_file, bootrom_file, color_palette, disable_renderer, sound_enabled, profiling=False):
@@ -45,7 +45,7 @@ class Motherboard:
 
     def buttonevent(self, key):
         if self.interaction.key_event(key):
-            self.cpu.set_interruptflag(cpu.HIGHTOLOW)
+            self.cpu.set_interruptflag(HIGHTOLOW)
 
     def stop(self, save):
         if self.sound_enabled:

@@ -13,22 +13,22 @@ from ctypes import c_void_p
 import sdl2
 
 SOUND_DESYNC_THRESHOLD = 5
-CPU_FREQ = 4213440 # hz
+CPU_FREQ = 4194304 # hz
 
-
+ 
 class Sound:
     def __init__(self):
         # Initialization is handled in the windows, otherwise we'd need this
         sdl2.SDL_Init(sdl2.SDL_INIT_AUDIO)
 
         # Open audio device
-        spec_want = sdl2.SDL_AudioSpec(32768, sdl2.AUDIO_S8, 2, 64)
+        spec_want = sdl2.SDL_AudioSpec(131072, sdl2.AUDIO_S8, 2, 64)
         spec_have = sdl2.SDL_AudioSpec(0, 0, 0, 0)
         self.device = sdl2.SDL_OpenAudioDevice(None, 0, spec_want, spec_have, 0)
 
         self.sample_rate = spec_have.freq
         self.sampleclocks = CPU_FREQ / self.sample_rate
-        self.audiobuffer = array("b", [0] * 4096) # Over 2 frames
+        self.audiobuffer = array("b", [0] * 16384) # Over 2 frames
         self.audiobuffer_p = c_void_p(self.audiobuffer.buffer_info()[0])
 
         self.clock = 0
