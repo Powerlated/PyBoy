@@ -121,16 +121,28 @@ NoEffect:
     jr WaitVblank
 
 PlaySound:
-    ld a, %0101111
+    ; Adjust frequency sweep
+    ld a, %0010011
     ldh [$10], a
 
-    ld a, $53
+    ld a, $48
     ldh [$13], a
 
     ; Trigger
-    ld a, $87
+    ld a, $81
     ldh [$14], a
     ret 
+
+AdjSound:
+    ; Adjust frequency sweep
+    ld a, %0011001
+    ldh [$10], a
+
+    ; Trigger
+    ld a, $81
+    ldh [$14], a
+    ret
+
 
 WaveTable:
     DB 0, 0, 1, 2, 2, 3, 3, 3, 2, 1, 1, 0, 0, 0, 0, 0
@@ -153,8 +165,11 @@ ExitVblank:
     jr Z, ExitVblank
     ld a, c
 
-    cp 30
+    cp 27
     call z, PlaySound
+
+    cp 31
+    call z, AdjSound
 
     ; One frame has passed, decrement counter
     dec C
